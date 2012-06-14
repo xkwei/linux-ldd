@@ -4,6 +4,8 @@ ifneq ($(KERNELRELEASE),)
 
 obj-m	:= helloworld.o
 
+helloworld-objs := helloworld_init.o helloworld_exit.o
+
 else
 #当然这里也可以是你自己的Linux的解压目录
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
