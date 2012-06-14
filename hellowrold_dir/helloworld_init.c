@@ -5,16 +5,17 @@
 #include <linux/cdev.h>     /*struct cdev*/
 #include <linux/slab.h>     /*kfree*/
 
-#define DEVICE_AUTHOR   "xkwei  <kwxia@hbgk.net>"
-#define DEVICE_DESCRIPTIN "for helloworld test"
-#define HELLOWORLD_MAX_DEVICE 1
-#define DEVICE_REGISTER_NAME "helloworld v0.5"
+#include "main.h"
+
+
+
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR(DEVICE_AUTHOR);
 MODULE_DESCRIPTION(DEVICE_DESCRIPTIN);
 MODULE_SUPPORTED_DEVICE("helloworld");
 MODULE_VERSION("version v0.2");
+
 
 
 static short myshort = 2;
@@ -52,12 +53,12 @@ struct cdev *cdev_p;
 
 static void printf_param(void)
 {
-    printk(KERN_ALERT "\nprintf_param.\n");
-    printk(KERN_ALERT "myshort = %d.\n", myshort);
-    printk(KERN_ALERT "myint = %d.\n", myint);
-    printk(KERN_ALERT "mylong = %ld.\n", mylong);
-    printk(KERN_ALERT "mystring :%s.\n", mystring);
-    printk(KERN_ALERT "myarray : %d , %d , %d , %d.\n",\
+    DEBUG(1, "\nprintf_param.\n");
+    DEBUG(1, "myshort = %d.\n", myshort);
+    DEBUG(1, "myint = %d.\n", myint);
+    DEBUG(1, "mylong = %ld.\n", mylong);
+    DEBUG(1, "mystring :%s.\n", mystring);
+    DEBUG(1, "myarray : %d , %d , %d , %d.\n",\
                             myarray[0], myarray[1], myarray[2], myarray[3]);
 }
 
@@ -74,7 +75,7 @@ static int char_reg_setup_cdev (void)
 
 	cdev_p= cdev_alloc();
 	if (!cdev_p) {
-		printk(KERN_WARNING "cdev_alloc failed\n");
+		DEBUG(1, "cdev_alloc failed\n");
 		goto out;
 	}
 
@@ -83,7 +84,7 @@ static int char_reg_setup_cdev (void)
 
     err = cdev_add(cdev_p, devid, HELLOWORLD_MAX_DEVICE);
     if (err < 0){
-        printk (KERN_WARNING "cdev_add fialed.\n");
+        DEBUG (1, "cdev_add fialed.\n");
         goto err_cdev_add;
     }
 
@@ -101,21 +102,21 @@ static int __init hello_init(void)
     int err;
     dev_t devid = 0;
     
-    printk(KERN_ALERT "hello world.\n");
+    DEBUG(1, "hello world.\n");
     printf_param();
     
     err = alloc_chrdev_region(&devid, 0, HELLOWORLD_MAX_DEVICE, DEVICE_REGISTER_NAME);
     if (err < 0){
-        printk (KERN_ALERT "ERR alloc_chrdev_region.\n");
+        DEBUG (1, "ERR alloc_chrdev_region.\n");
         goto err_alloc_chrdev_region;
     }
     
     helloworld_major = MAJOR (devid);
-    helloworld_minor= MINOR(devid);
+    helloworld_minor = MINOR(devid);
 
     err = char_reg_setup_cdev();
     if (err < 0){
-        printk (KERN_WARNING "err_char_reg_setup_cdev.\n");
+        DEBUG (1, "err_char_reg_setup_cdev.\n");
         goto err_char_reg_setup_cdev;
     }
 
