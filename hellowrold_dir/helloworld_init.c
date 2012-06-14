@@ -1,7 +1,9 @@
 #include <linux/init.h>
-#include <linux/fs.h>
-#include <linux/kernel.h>
-#include <linux/module.h>
+#include <linux/module.h>   /*init module*/
+#include <linux/kernel.h>   /*init printk*/
+#include <linux/fs.h>       /*dev_t*/
+#include <linux/cdev.h>     /*struct cdev*/
+#include <linux/slab.h>     /*kfree*/
 
 #define DEVICE_AUTHOR   "xkwei  <kwxia@hbgk.net>"
 #define DEVICE_DESCRIPTIN "for helloworld test"
@@ -45,7 +47,7 @@ MODULE_PARM_DESC(myarray, "myarray test array.");
 
 int helloworld_minor = 0;
 int helloworld_major = 0;
-
+struct cdev *cdev_p;
 
 
 static void printf_param(void)
@@ -59,8 +61,42 @@ static void printf_param(void)
                             myarray[0], myarray[1], myarray[2], myarray[3]);
 }
 
+/* File operations struct for character device */
+static const struct file_operations helloworld_fops = {
+	.owner		= THIS_MODULE,
+ };
 
-static int hello_init(void)
+
+static int char_reg_setup_cdev (void)
+{
+    int err;
+    dev_t devid = MKDEV (helloworld_major, helloworld_minor);
+
+	cdev_p= cdev_alloc();
+	if (!cdev_p) {
+		printk(KERN_WARNING "cdev_alloc failed\n");
+		goto out;
+	}
+
+    cdev_p->owner = THIS_MODULE;
+	cdev_p->ops = &helloworld_fops;
+
+    err = cdev_add(cdev_p, devid, HELLOWORLD_MAX_DEVICE);
+    if (err < 0){
+        printk (KERN_WARNING "cdev_add fialed.\n");
+        goto err_cdev_add;
+    }
+
+    return 0;
+    
+err_cdev_add:
+    kfree (cdev_p);
+    cdev_p = NULL;
+out:
+    return -1;
+}
+
+static int __init hello_init(void)
 {
     int err;
     dev_t devid = 0;
@@ -73,11 +109,22 @@ static int hello_init(void)
         printk (KERN_ALERT "ERR alloc_chrdev_region.\n");
         goto err_alloc_chrdev_region;
     }
+    
     helloworld_major = MAJOR (devid);
     helloworld_minor= MINOR(devid);
 
-err_alloc_chrdev_region:
+    err = char_reg_setup_cdev();
+    if (err < 0){
+        printk (KERN_WARNING "err_char_reg_setup_cdev.\n");
+        goto err_char_reg_setup_cdev;
+    }
+
     return 0;
+    
+err_char_reg_setup_cdev:
+    unregister_chrdev_region(devid, HELLOWORLD_MAX_DEVICE);
+err_alloc_chrdev_region:
+    return -1;
 }
 
 
