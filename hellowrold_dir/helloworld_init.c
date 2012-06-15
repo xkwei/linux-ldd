@@ -4,7 +4,8 @@
 #include <linux/fs.h>       /*dev_t*/
 #include <linux/cdev.h>     /*struct cdev*/
 #include <linux/slab.h>     /*kfree*/
-#include <asm/uaccess.h>
+#include <asm/uaccess.h>    /*copy_from/to_user*/
+#include <linux/device.h>   /*class class_device*/
 
 
 #include "main.h"
@@ -54,6 +55,7 @@ int helloworld_nr_device = HELLOWORLD_MAX_DEVICE;
 int quantum = SCULL_QUANTUM;
 int qset = SCULL_QSET;
 struct scull_dev *scull_devices = NULL;
+struct class *helloworld_class;
 
 module_param(helloworld_minor, int, S_IRUGO);
 MODULE_PARM_DESC(helloworld_minor, "devid : minor.");
@@ -275,8 +277,8 @@ ssize_t hello_write(struct file *filp, const char __user *buf,\
         dev->size = *f_ops;
 
 err_copy_form_user:    
+    
 err_kmalloc_quantum:
-
 
 err_kmalloc_qset:
 
@@ -305,8 +307,9 @@ static const struct file_operations helloworld_fops = {
 
 static int char_reg_setup_cdev (void)
 {
-    int err;
+    int retval;
     int temp = 0;
+    struct device *class_dev;
     dev_t devid = MKDEV (helloworld_major, helloworld_minor);
 
     scull_devices = kmalloc(helloworld_nr_device * sizeof (struct scull_dev),\
@@ -322,12 +325,31 @@ static int char_reg_setup_cdev (void)
         scull_devices[temp].cdev.ops = &helloworld_fops;
         scull_devices[temp].cdev.owner = THIS_MODULE;
     }
-
-    err = cdev_add(&scull_devices[temp].cdev, devid, helloworld_nr_device);
-    if (err < 0){
+     
+    retval= cdev_add(&scull_devices[temp].cdev, devid, helloworld_nr_device);
+    if (retval < 0){
         DEBUG (1, "err_cdev_add.");
         goto err_cdev_add;
     }
+
+
+	helloworld_class = class_create(THIS_MODULE, "hbgk_class");
+	if (IS_ERR(helloworld_class)) {
+		retval = PTR_ERR(helloworld_class);
+        DEBUG (1, "err_class_create.");
+		goto err_class_create;
+	}
+	for (temp = 0; temp < helloworld_nr_device; temp++){
+		class_dev = device_create(helloworld_class, NULL, MKDEV(helloworld_major, temp), NULL,
+			      "hbgk_device%d", temp);
+        
+        //class_dev = device_create(bsg_class, parent, dev, NULL, "%s", devname);
+        if (IS_ERR(class_dev)) {
+            retval= PTR_ERR(class_dev);
+            DEBUG (1, "err_device_create %d", temp);
+            goto err_device_create;
+        }
+	}
     #if 0
     cdev_p= cdev_alloc();
 	if (!cdev_p) {
@@ -347,12 +369,18 @@ static int char_reg_setup_cdev (void)
     
 
     return 0;
-
+err_device_create:
+    class_destroy(helloworld_class);
+err_class_create:
+    for (temp = 0; temp < helloworld_nr_device; temp++){
+        cdev_del(&scull_devices[temp].cdev);
+        scull_trim(&scull_devices[temp]);
+    }
 err_cdev_add:
     kfree (scull_devices);
     scull_devices = NULL;
 
-    return err;
+    return retval;
 }
 
 static int __init hello_init(void)
