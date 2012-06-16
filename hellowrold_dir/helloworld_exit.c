@@ -15,11 +15,10 @@ static void __exit hello_exit (void)
     dev_t devid;
     int temp;
     devid = MKDEV (helloworld_major, helloworld_minor);
-    /*cdev_del (cdev_p);
-        kfree(cdev_p);
-       */
+
     for (temp = 0; temp < helloworld_nr_device; temp++){
         cdev_del(&scull_devices[temp].cdev);
+        scull_trim(&scull_devices[temp]);
     }
     kfree(scull_devices);
     scull_devices = NULL;

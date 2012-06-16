@@ -4,6 +4,7 @@
 #include <linux/fs.h>       /*dev_t*/
 #include <linux/cdev.h>     /*struct cdev*/
 #include <linux/slab.h>     /*kfree*/
+#include <asm/uaccess.h>
 
 
 #include "main.h"
@@ -83,20 +84,75 @@ static void printf_param(void)
 
 void scull_trim (struct scull_dev *dev)
 {
-    struct scull_qset *current, *next;
-    current = dev->qset;
+    struct scull_qset *current_qset, *next;
+    int qset = dev->qset;
+    int quantum = dev->quantum;
+    int i;
+    DEBUG (7, "scull_trim.");
 
-    for (;current;next){
+    for (current_qset = dev->data; current_qset; current_qset = next){
+        if (current_qset->data){
+            for (i = 0; i < dev->qset; i++)
+                kfree (current_qset->data[i]);
+            kfree (current_qset->data);
+            current_qset->data = NULL;
+        }
         
+        next = current_qset->next;
+        kfree (current_qset);
+        current_qset = NULL;
     }
+
+    dev->qset = qset;
+    dev->quantum = quantum;
+    dev->size = 0;
+    dev->data = NULL;
+
+    return ;
+}
+
+
+struct scull_qset *scull_follow(struct scull_dev * dev, int n)
+{
+    struct scull_qset *current_qset;
+
+    DEBUG (7, "scull_qset.");
+    current_qset = dev->data;
+    if (!current_qset){
+        current_qset = dev->data = kmalloc (sizeof (struct scull_qset), GFP_KERNEL);
+        if (!current_qset){
+            DEBUG (1, "err_kmalloc_scull_qset.");
+            goto err_kmalloc_scull_qset;
+        }
+        memset (current_qset, 0, sizeof (struct scull_qset));
+    }
+
+    while (n--){
+        if (!current_qset->next){
+            current_qset->next = kmalloc (sizeof (struct scull_qset), GFP_KERNEL);
+            if (!current_qset->next){
+                DEBUG (1, "err_kmalloc_scull_qset_next.");
+                goto err_kmalloc_scull_qset_next;
+            }
+            memset (current_qset, 0, sizeof (struct scull_qset));
+        }
+        current_qset = current_qset->next;
+    }
+    
+    
+err_kmalloc_scull_qset_next:
+
+err_kmalloc_scull_qset:
+    return current_qset;
+
 }
 
 /* open release*/
 static int hello_open(struct inode *inode, struct file *filp)
 {
-    DEBUG (7, "hello_open.\n");
     struct scull_dev *dev;
     
+    DEBUG (7, "hello_open.\n");
     dev = container_of(inode->i_cdev, struct scull_dev, cdev);
     filp->private_data = dev;
 
@@ -114,13 +170,120 @@ int hello_release(struct inode *inode, struct file *filp)
     return 0;
 }
 
-ssize_t hello_read(struct file *filp, char __user *buf, size_t count , loff_t *f_ops)
+ssize_t hello_read(struct file *filp, char __user *buf,\
+    size_t count , loff_t *f_ops)
 {
-    DEBUG (7, "hello_read.\n");
+    struct scull_dev *dev = filp->private_data;
+    struct scull_qset *current_qset;
+    int qset = dev->qset;
+    int quantum = dev->quantum;
+    int itemsize = qset*quantum;
+    int item, s_pos, q_pos, reset;
+    ssize_t retval = -ENOMEM;
 
-    return 0;
+    DEBUG (7, "hello_read.\n");
+    item = (long)*f_ops / itemsize;
+    reset = (long)*f_ops % itemsize;
+    s_pos = reset / quantum;
+    q_pos = reset % quantum;
+
+    current_qset = scull_follow(dev, item);
+
+    if (!current_qset || !current_qset->data || !current_qset->data[s_pos]){
+        DEBUG (1, "err_back_scull_follow");
+        goto err_back_scull_follow;
+    }
+
+    /* ensure count */
+    if (count > (quantum - q_pos))
+        count = quantum - q_pos;
+    /* copy from user */
+    if (copy_to_user(buf, current_qset->data[s_pos] + q_pos, count)){
+        DEBUG (1, "err_copy_to_user.");
+        retval = -EFAULT;
+        goto err_copy_to_user;
+    }
+    /* update */
+    retval = count;
+
+    *f_ops += count;
+
+err_copy_to_user:
+
+    
+err_back_scull_follow:
+    
+    return retval;
 }
 
+
+ssize_t hello_write(struct file *filp, const char __user *buf,\
+    size_t count, loff_t *f_ops)
+{
+    struct scull_dev *dev = filp->private_data;
+    struct scull_qset *current_qset;
+    int qset = dev->qset;
+    int quantum = dev->quantum;
+    int itemsize = qset*quantum;
+    int item, s_pos, q_pos, reset;
+    ssize_t retval = -ENOMEM;
+
+    DEBUG (7, "hello_write.");
+    item = (long)*f_ops / itemsize;
+    reset = (long)*f_ops % itemsize;
+    s_pos = reset / quantum;
+    q_pos = reset % quantum;
+
+    current_qset = scull_follow(dev, item);
+
+    if (!current_qset){
+        DEBUG (1, "err_back_scull_follow");
+        goto err_back_scull_follow;
+    }
+    /* kmalloc qset */
+    if (!current_qset->data){
+        current_qset = kmalloc (qset * sizeof (char *), GFP_KERNEL);
+        if (!current_qset){
+            DEBUG (1, "err_kmalloc_qset");
+            goto err_kmalloc_qset;
+        }
+        memset(current_qset, 0, qset * sizeof (char *));
+    }
+    /* kmalloc quantum */
+    if (!current_qset->data[s_pos]){
+        current_qset->data[s_pos] = kmalloc (quantum, GFP_KERNEL);
+        if (!current_qset->data[s_pos]){
+            DEBUG (1, "err_kmalloc_quantum");
+            goto err_kmalloc_quantum;
+        }
+        memset (current_qset->data[s_pos], 0, quantum);
+    }
+    /* ensure count */
+    if (count > (quantum - q_pos))
+        count = quantum - q_pos;
+    /* copy from user */
+    if (copy_from_user(current_qset->data[s_pos] + q_pos, buf, count)){
+        DEBUG (1, "err_copy_form_user.");
+        retval = -EFAULT;
+        goto err_copy_form_user;
+    }
+    /* update */
+    retval = count;
+    *f_ops += count;
+    //dev->size += count;
+    if (dev->size < *f_ops)
+        dev->size = *f_ops;
+
+err_copy_form_user:    
+err_kmalloc_quantum:
+
+
+err_kmalloc_qset:
+
+err_back_scull_follow:
+
+    return retval;
+}
 loff_t hello_lseek(struct file *filp, loff_t off, int whence)
 {
     DEBUG (7, "hello_lseek.\n");
@@ -135,6 +298,7 @@ static const struct file_operations helloworld_fops = {
 	.read = hello_read,
 	.llseek = hello_lseek,
 	.release = hello_release,
+	.write = hello_write,
 	.owner		= THIS_MODULE,
  };
 
@@ -219,7 +383,7 @@ static int __init hello_init(void)
         goto err_char_reg_setup_cdev;
     }
 
-    return 0;
+    return err;
     
 err_char_reg_setup_cdev:
     unregister_chrdev_region(devid, helloworld_nr_device);
